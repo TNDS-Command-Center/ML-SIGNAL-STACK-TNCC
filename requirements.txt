@@ -1,0 +1,26 @@
+# SignalStack — Python dependencies
+# Install: pip install -r requirements.txt
+
+# Core data
+pandas>=2.0
+numpy>=1.24
+
+# Statistics / time series
+statsmodels>=0.14
+scipy>=1.11
+
+# ML metrics
+scikit-learn>=1.3
+
+# Model persistence
+joblib>=1.3
+
+# Visualization
+matplotlib>=3.7
+
+# Optional: export CSVs from Excel (if scripting the export step)
+openpyxl>=3.1
+
+# Optional: alternative models (uncomment when ready)
+# prophet>=1.1
+# holidays>=0.40

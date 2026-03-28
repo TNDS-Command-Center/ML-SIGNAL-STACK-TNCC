@@ -1,0 +1,33 @@
+# Virtual environments
+venv_*/
+__pycache__/
+*.pyc
+*.pyo
+
+# Model files (large binaries)
+models/**/*.pkl
+
+# Data — raw inputs and outputs (not versioned)
+data/raw/**/*.csv
+data/processed/**/*.csv
+data/output/**/*.csv
+data/output/**/*.txt
+
+# Visuals (generated artifacts)
+visuals/**/*.png
+
+# Keep folder structure
+!data/raw/**/.gitkeep
+!data/processed/**/.gitkeep
+!data/output/**/.gitkeep
+!models/**/.gitkeep
+!visuals/**/.gitkeep
+
+# Env files
+.env
+*.env
+
+# OS
+.DS_Store
+desktop.ini
+Thumbs.db
