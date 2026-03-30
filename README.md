@@ -3,7 +3,7 @@
 
 SARIMA time series forecasting pipeline for five SignalStack business metrics.
 One codebase. Five signals. Each source runs independently with its own data,
-outputs, models, and visuals.
+outputs, models, visuals, and client-facing report narration.
 
 ---
 
@@ -23,7 +23,7 @@ Current forecast/validation defaults:
 
 ---
 
-## Current Data Baseline (Updated March 29, 2026)
+## Current Data Baseline (Updated March 30, 2026)
 
 The workbooks were expanded for ML testing with an additional full year of synthetic historical rows.
 
@@ -35,10 +35,15 @@ The workbooks were expanded for ML testing with an additional full year of synth
 | `pipeline_pulse` | `Pipeline Log` (aggregated weekly) | 89 (weekly agg) | 2026-W23 |
 | `team_tempo` | `Hours Log` (aggregated to weekly) | 85 | 2026-W27 |
 
-Rebuild raw CSVs any time workbook data changes:
+Rebuild raw CSVs any time workbook data changes (auto-runs root workbook integrity fixes first):
 
 ```bash
 python export_to_csv.py
+```
+
+If you need to bypass the integrity pass:
+```bash
+python export_to_csv.py --skip-root-fix
 ```
 
 ---
@@ -53,7 +58,7 @@ bash setup.sh
 source venv_tnds-signal-engine/bin/activate
 
 # 3. Export Excel workbooks to CSV (place .xlsx files in project root first)
-python export_to_csv.py
+python export_to_csv.py        # auto-runs root workbook integrity fixes first
 
 # 4. Run pipeline for one source
 python run_pipeline.py --source sales
@@ -64,6 +69,10 @@ python run_pipeline.py --source all
 
 # 6. Skip grid search after first run (use saved params)
 python run_pipeline.py --source sales --skip-search
+
+# 7. Generate report + delivery package
+python generate_report.py
+python package_output.py
 ```
 
 ---
@@ -75,6 +84,10 @@ tnds-signal-engine/
   config.py               # Source registry + all parameters
   run_pipeline.py         # Single entry point — pass --source
   export_to_csv.py        # Batch Excel → CSV export utility
+  fix_root_workbooks.py   # Root workbook type normalizer (date/number text fixes)
+  generate_report.py      # Word report builder (Signal Profile + glossary)
+  package_output.py       # Delivery ZIP builder with standalone HTML report
+  fix_ar_aging.py         # CashFlowCompass AR/AP formula repair utility
   requirements.txt
   setup.sh
   src/
@@ -82,7 +95,7 @@ tnds-signal-engine/
     preprocessor.py       # Outlier detection + EWM smoothing
     accuracy_log.py       # Persistent run-by-run accuracy tracking CSV
     model.py              # Convergence-aware SARIMA grid search + training
-    evaluator.py          # Forecast + metrics (MAE/RMSE/MAPE + CV)
+    evaluator.py          # Forecast + metrics (MAE/RMSE/MAPE + CV + bias detection)
     visualizer.py         # 6 standard plots per source
   data/
     raw/
@@ -105,7 +118,8 @@ tnds-signal-engine/
 1. Open `tnds-sales-data-template.xlsx`
 2. Go to **RAW_INPUT** tab
 3. Add transaction rows with `Date`, `Qty`, and `Sales Price` (or `Total Sales`)
-4. Run `python export_to_csv.py --source sales` (script writes `data/raw/sales/sales_pipeline_ready.csv`)
+4. Keep the **Analysis** tab intact; it feeds the report's sales Signal Profile narration.
+5. Run `python export_to_csv.py --source sales` (script writes `data/raw/sales/sales_pipeline_ready.csv`)
 
 ### Ops Pulse
 1. Open `SignalStack_OpsPulse.xlsx`
@@ -154,7 +168,7 @@ No other files need to change.
 ```
 data/output/<source>/
   forecast_results.csv        # Actual vs Forecast vs CI vs Residuals
-  metrics.txt                 # MAE, RMSE, MAPE, CV_Mean_MAPE, CV_Std_MAPE
+  metrics.txt                 # MAE, RMSE, MAPE, CV metrics, Bias_Detected, Bias_Pattern
   best_sarima_parameters.txt  # Best order + AIC + adjusted AIC + convergence
 
 data/output/
@@ -170,6 +184,12 @@ visuals/<source>/
   04_forecast_vs_actual.png
   05_residuals.png
   06_extended_forecast.png
+
+reports/
+  SignalStack_Report_<YYYY-Www>.docx   # Word report with glossary + Signal Profile
+
+Desktop/
+  SignalStack_Delivery_<YYYY-Www>.zip  # Delivery ZIP containing DOCX, HTML, charts, Excel
 ```
 
 ---

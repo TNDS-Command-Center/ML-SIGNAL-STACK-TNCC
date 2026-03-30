@@ -28,6 +28,7 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import get_source, SOURCE_REGISTRY
+from fix_root_workbooks import run_root_workbook_fixes
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -489,11 +490,34 @@ def export_source(source_name):
     return True
 
 
+def run_pre_export_integrity_pass():
+    """
+    Normalize root workbook data types and known formula compatibility issues
+    before any CSV export.
+    """
+    print("\n[export] Running root workbook integrity pass...\n")
+    try:
+        summary = run_root_workbook_fixes()
+        print(
+            "\n[export] Root workbook integrity pass complete. "
+            f"Files updated: {summary.get('changed_files', 0)}"
+        )
+        if summary.get("errors"):
+            print(f"[export] WARNING: integrity pass errors: {summary['errors']}")
+    except Exception as e:
+        print(f"[export] WARNING: integrity pass failed, continuing export. Error: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="SignalStack — Export Excel to CSV.")
     parser.add_argument("--source", default="all",
                         help="Source name or 'all'. Default: all")
+    parser.add_argument("--skip-root-fix", action="store_true",
+                        help="Skip root workbook integrity pass before export.")
     args = parser.parse_args()
+
+    if not args.skip_root_fix:
+        run_pre_export_integrity_pass()
 
     if args.source == "all":
         print("\n[export] Exporting all SignalStack sources...\n")

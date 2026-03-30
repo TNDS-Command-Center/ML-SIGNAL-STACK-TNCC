@@ -2,7 +2,7 @@
 ## True North Data Strategies
 ### For Business Owners — No Data Science Background Required
 
-**Version 1.2 (Updated March 29, 2026) | Jacob Johnston | jacob@truenorthstrategyops.com | 719-204-6365**
+**Version 1.3 (Updated March 30, 2026) | Jacob Johnston | jacob@truenorthstrategyops.com | 719-204-6365**
 **Colorado Springs, CO | SDVOSB**
 
 ---
@@ -13,7 +13,7 @@
 2. What You Get Each Week
 3. Folder Structure
 4. Your Five Business Signals
-5. The Weekly Workflow — Three Commands
+5. The Weekly Workflow — Core Commands
 6. Updating Your Excel Workbooks
 7. Reading Your Reports
 8. Reading the Charts
@@ -44,22 +44,30 @@ A dashboard shows where you've been. SignalStack shows where you're going, with 
 
 ## 2. What You Get Each Week
 
-After running the three commands, you get:
+After running the workflow commands, you get:
 
 **A Word document report** in the `reports/` folder, automatically named by ISO week (e.g., `SignalStack_Report_YYYY-Www.docx`). It contains:
 - An Executive Summary table — all five signals at a glance, color-coded by accuracy
 - A detail section per signal — metrics scorecard + embedded forecast chart
+- Sales Signal Profile narration pulled from the Sales workbook `Analysis` tab
+- Bias warning notes when residual pattern checks detect trend-tracking issues
 - A Glossary — every term in plain English
+
+**A delivery ZIP package** on your Desktop (`SignalStack_Delivery_YYYY-Www.zip`) containing:
+- The latest Word report
+- A standalone HTML report
+- Source Excel workbooks
+- Charts and code snapshot for delivery/review
 
 **Six diagnostic charts per signal** as PNG image files in `visuals/` (`01` through `06`), including the extended forecast chart.
 
-**Five metrics files** in `data/output/` — MAE, RMSE, MAPE, CV_Mean_MAPE, CV_Std_MAPE, model selected.
+**Five metrics files** in `data/output/` — MAE, RMSE, MAPE, CV_Mean_MAPE, CV_Std_MAPE, model selected, and residual bias flags (`Bias_Detected`, `Bias_Pattern`).
 
 **One persistent accuracy log** in `data/output/accuracy_log.csv` — appends one row per source per run so you can track improvement over time.
 
 **Five trained model files** in `models/` — reused each week so the run takes seconds.
 
-### Current Testing Baseline (March 29, 2026)
+### Current Testing Baseline (March 30, 2026)
 
 The workbook history was expanded by an additional full year of rows for ML testing.
 
@@ -82,7 +90,10 @@ ML-SIGNAL-STACK-TNCC/
   config.py                        Master settings. Change parameters here.
   run_pipeline.py                  Run the forecasting engine.
   export_to_csv.py                 Export Excel data to CSVs the engine reads.
+  fix_root_workbooks.py            Normalizes date/number text in root Excel inputs.
   generate_report.py               Generate the Word document report.
+  package_output.py                Build Desktop ZIP delivery package + HTML report.
+  fix_ar_aging.py                  Refresh AR/AP workbook formulas for cash-flow tab integrity.
   requirements.txt                 Python packages required.
 
   SignalStack_OpsPulse.xlsx        Update weekly (Ops data)
@@ -120,6 +131,10 @@ One row per transaction. Three columns:
 **Best data source:** QuickBooks → Sales by Customer Detail → export as Excel → copy Date, Qty, Rate columns into the RAW_INPUT tab.
 
 If you only have a total (no qty/price split), put `1` in Qty and the full dollar amount in Sales Price.
+
+**Analysis tab note:** This workbook now includes an `Analysis` tab used by report narration.
+Do not delete or rename it. The pipeline still trains from `RAW_INPUT`; `Analysis` is read
+for business-context Signal Profile text in Word/HTML outputs.
 
 
 ### Signal 2: Ops Pulse (Weekly Jobs Completed)
@@ -197,9 +212,9 @@ Add one row per employee per week in Hours Log. Keep Roster current for employee
 
 ---
 
-## 5. The Weekly Workflow — Three Commands
+## 5. The Weekly Workflow — Core Commands
 
-Every week after updating your Excel files, open PowerShell, navigate to your project folder, activate the virtual environment, and run three commands in order.
+Every week after updating your Excel files, open PowerShell, navigate to your project folder, activate the virtual environment, and run the core commands in order.
 
 ### Step 1: Activate the environment (if not already active)
 ```powershell
@@ -212,8 +227,13 @@ You'll know it's active when you see `(venv_tnds-signal-engine)` at the start of
 ```powershell
 python export_to_csv.py
 ```
-This reads all five Excel workbooks and writes clean data files the pipeline can read.
+`export_to_csv.py` now runs the root workbook integrity pass automatically (`fix_root_workbooks.py`) before exporting, so text/formula compatibility issues are repaired first.
 Expected output: `OK` for each source in the summary at the bottom.
+
+If you need to bypass this auto-fix pass (advanced use only):
+```powershell
+python export_to_csv.py --skip-root-fix
+```
 
 ### Step 3: Run the forecasting pipeline
 ```powershell
@@ -226,6 +246,12 @@ The `--skip-search` flag reuses previously found model parameters so this runs i
 python generate_report.py
 ```
 Report saves to `reports/SignalStack_Report_YYYY-Www.docx` automatically named for the current week.
+
+### Step 5 (optional but recommended): Build client delivery ZIP + HTML
+```powershell
+python package_output.py
+```
+Delivery saves to your Desktop as `SignalStack_Delivery_YYYY-Www.zip`.
 
 ---
 
@@ -309,7 +335,12 @@ Five rows, one per signal. Columns:
 One section per signal. Each contains:
 - A **metrics stats bar** showing model, MAPE, MAE, and RMSE
 - An **accuracy statement** in plain English (italic, color-coded)
+- A **Decision Guidance** sentence tied to the MAPE quality tier
+- A **Signal Profile** paragraph for Sales (customer concentration + transaction context)
 - The **forecast vs actual chart** (see Section 8 for how to read it)
+
+If residual bias is detected (for example, V-shaped errors), the report includes a short
+note calling that out so accuracy risk is transparent.
 
 ### Glossary
 Definitions for every technical term in the report.
@@ -334,7 +365,7 @@ There's a 95% probability the actual value will land inside this band. Wider ban
 
 **What good looks like:** The green (actual) line stays close to the orange (forecast) line and mostly inside the shaded band. Cash Flow Compass at about 0.6% MAPE is what an excellent model looks like — the lines are nearly on top of each other.
 
-**What moderate looks like:** Pipeline Pulse at about 18% MAPE — directional signal is useful, but individual week values can still vary materially. Use this signal for trend direction and planning ranges, not exact dollar commitments.
+**What moderate looks like:** Sales at about 12.8% MAPE — useful for planning direction and ranges, but review weekly actuals because short-term swings can persist.
 
 ---
 
@@ -444,7 +475,7 @@ Open `run_pipeline.py` and find this block near the top:
 ```python
 MANUAL_PARAMS = {
     "sales": {
-        "order":    (1, 1, 1),      # ← Replace with Best order from txt file
+        "order":    (0, 1, 0),      # ← Replace with Best order from txt file
         "seasonal": (2, 0, 2, 5),   # ← Replace with Best seasonal from txt file
     },
     "ops_pulse": {
@@ -670,6 +701,9 @@ How many periods beyond the validation window the model projects. Current defaul
 **Grid Search**
 The process of testing SARIMA parameter combinations and selecting the best model. SignalStack rejects non-converged fits, applies an over-parameterization penalty during selection, and includes a validation MAPE guardrail fallback for unstable results. Runtime varies by source and configured search ranges.
 
+**Ensemble Forecast**
+A blending technique that combines SARIMA with a Weighted Moving Average (WMA) to stabilize volatile signals. The SARIMA component captures seasonality/trend while the WMA anchors projections to recent observed levels.
+
 **Cross-Validation (CV)**
 Rolling-origin backtesting across multiple folds to estimate stability, not just one split. Saved as `CV_Mean_MAPE` and `CV_Std_MAPE` in each source `metrics.txt`.
 
@@ -712,6 +746,9 @@ How long one "season" is in your data. For weekly data with a monthly pattern, s
 **Signal**
 In SignalStack, a "signal" is one tracked business metric — sales revenue, jobs completed, cash balance, pipeline value, or billable hours. Each signal has its own model, data, and output.
 
+**Signal Profile**
+Business context block in reports (currently Sales) that summarizes transaction volume, customer count, and revenue concentration so forecast accuracy is interpreted against data structure.
+
 **Skip-Search**
 A command flag (`--skip-search`) that tells the pipeline to skip the slow SARIMA grid search and use the parameters already saved in `MANUAL_PARAMS` in `run_pipeline.py`. Use this every week after your first full run.
 
@@ -740,6 +777,7 @@ A self-contained Python installation specific to this project. Keeps SignalStack
 python export_to_csv.py
 python run_pipeline.py --source all --skip-search
 python generate_report.py
+python package_output.py   # optional delivery ZIP + HTML
 ```
 
 ### Run grid search (quarterly or after major data additions)
