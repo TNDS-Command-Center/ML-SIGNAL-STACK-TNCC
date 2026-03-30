@@ -2,26 +2,26 @@
 ## True North Data Strategies
 ### For Business Owners — No Data Science Background Required
 
-**Version 1.3 (Updated March 30, 2026) | Jacob Johnston | jacob@truenorthstrategyops.com | 719-204-6365**
+**Version 1.4 (Updated March 30, 2026) | Jacob Johnston | jacob@truenorthstrategyops.com | 719-204-6365**
 **Colorado Springs, CO | SDVOSB**
 
 ---
 
 ## Table of Contents
 
-1. What Is SignalStack?
-2. What You Get Each Week
-3. Folder Structure
-4. Your Five Business Signals
-5. The Weekly Workflow — Core Commands
-6. Updating Your Excel Workbooks
-7. Reading Your Reports
-8. Reading the Charts
-9. Fine-Tuning the System (config.py)
-10. Fine-Tuning Model Parameters (run_pipeline.py)
-11. Adding a New Data Source
-12. Troubleshooting
-13. Glossary of Terms
+1. [What Is SignalStack?](#1-what-is-signalstack)
+2. [What You Get Each Week](#2-what-you-get-each-week)
+3. [Folder Structure](#3-folder-structure--where-everything-lives)
+4. [Your Five Business Signals](#4-your-five-business-signals)
+5. [The Weekly Workflow — Core Commands](#5-the-weekly-workflow--core-commands)
+6. [Updating Your Excel Workbooks](#6-updating-your-excel-workbooks)
+7. [Reading Your Reports](#7-reading-your-reports)
+8. [Reading the Charts](#8-reading-the-charts)
+9. [Fine-Tuning the System (config.py)](#9-fine-tuning-the-system-configpy)
+10. [Fine-Tuning Model Parameters (run_pipeline.py)](#10-fine-tuning-model-parameters-run_pipelinepy)
+11. [Adding a New Data Source](#11-adding-a-new-data-source)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Glossary of Terms](#13-glossary-of-terms)
 
 ---
 
@@ -278,6 +278,9 @@ python generate_report.py --out "reports\ChiefPetroleum_Weekly_YYYY-Www.docx"
 ## 6. Updating Your Excel Workbooks
 
 **The golden rule:** Always add rows, never delete old ones. The model needs history — removing rows reduces accuracy.
+
+**Data-type safeguard:** You do not need to run Excel Text-to-Columns manually before export.
+`export_to_csv.py` automatically runs the root workbook integrity pass (`fix_root_workbooks.py`) to normalize date/number text cells and repair known formula compatibility wrappers.
 
 **For Ops Pulse:**
 - Open `SignalStack_OpsPulse.xlsx`
@@ -645,6 +648,24 @@ Expected: C:\...\SignalStack_OpsPulse.xlsx
 
 ---
 
+### Integrity pass shows workbook permission/lock error
+
+Example:
+```
+[root_fix] ERROR: SignalStack_TeamTempo.xlsx: [Errno 13] Permission denied
+```
+
+**Fix:** Close that workbook in Excel (and any preview panes/cloud sync lock), then rerun:
+```powershell
+python export_to_csv.py
+```
+You can also run just the integrity repair step:
+```powershell
+python fix_root_workbooks.py
+```
+
+---
+
 ### Pipeline runs but MAPE gets worse each week
 
 This usually means one of three things:
@@ -774,6 +795,7 @@ A self-contained Python installation specific to this project. Keeps SignalStack
 .\venv_tnds-signal-engine\Scripts\Activate.ps1
 
 # Update Excel files first, then:
+python fix_root_workbooks.py   # optional standalone repair pass
 python export_to_csv.py
 python run_pipeline.py --source all --skip-search
 python generate_report.py

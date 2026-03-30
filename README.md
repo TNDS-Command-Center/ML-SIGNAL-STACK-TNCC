@@ -46,6 +46,11 @@ If you need to bypass the integrity pass:
 python export_to_csv.py --skip-root-fix
 ```
 
+Run the integrity pass by itself (no CSV export):
+```bash
+python fix_root_workbooks.py
+```
+
 ---
 
 ## Quick Start
@@ -130,14 +135,14 @@ tnds-signal-engine/
 ### Cash Flow Compass
 1. Open `SignalStack_CashFlowCompass.xlsx`
 2. Go to **Weekly Position** tab
-3. Copy the full weekly tracker rows
-4. Save as `data/raw/cash_flow_compass/cash_flow_weekly.csv`
+3. Copy/paste the latest weekly tracker rows into the tab
+4. Run `python export_to_csv.py --source cash_flow_compass` (script exports weekly CSV)
 
 ### Pipeline Pulse
 1. Open `SignalStack_PipelinePulse.xlsx`
 2. Go to **Pipeline Log** tab
 3. Ensure `Date Entered` and `Est. Value` are populated for active rows
-4. Save as `data/raw/pipeline_pulse/pipeline_pulse_weekly.csv` (export script aggregates weekly)
+4. Run `python export_to_csv.py --source pipeline_pulse` (script aggregates weekly CSV)
 
 ### Team Tempo
 1. Open `SignalStack_TeamTempo.xlsx`
