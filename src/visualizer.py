@@ -1,12 +1,13 @@
 """
 visualizer.py — SignalStack: Plot generation for all pipeline stages.
 =====================================================================
-Produces 5 standard plots per source run:
+Produces 6 standard plots per source run:
     01_raw_time_series.png
     02_decomposition.png
     03_preprocessing.png
     04_forecast_vs_actual.png
     05_residuals.png
+    06_extended_forecast.png
 
 All plot titles and axis labels use the source's description and
 target_column fields. All output paths are scoped to visuals/<source>/
@@ -164,9 +165,70 @@ def plot_residuals(forecast_df, src):
     _save_fig(fig, "05_residuals.png", src)
 
 
+def plot_forecast_extended(train, validation, model_results, src):
+    """
+    Plot training + validation history with a full forecast_horizon projection
+    into the future (beyond validation). This is the client-facing chart.
+    """
+    from src.evaluator import forecast as run_forecast, ensemble_forecast as run_ensemble_forecast
+
+    label  = src.get("description", src["raw_subdir"])
+    target = src["target_column"]
+    colors = src["colors"]
+    fig_sz = src["figure_size"]
+    horizon = src["forecast_horizon"]
+
+    # Forecast the full horizon from end of training data
+    if src.get("ensemble_forecast"):
+        forecast_values, ci = run_ensemble_forecast(
+            model_results["model"],
+            steps=len(validation) + horizon,
+            log_transformed=model_results["log_transformed"],
+            smoothed_series=model_results.get("smoothed"),
+            weights=tuple(src.get("ensemble_weights", (0.6, 0.4))),
+        )
+    else:
+        forecast_values, ci = run_forecast(
+            model_results["model"],
+            steps=len(validation) + horizon,
+            log_transformed=model_results["log_transformed"],
+        )
+
+    # Split into validation-overlap and future-only portions
+    val_forecast = forecast_values[:len(validation)]
+    future_forecast = forecast_values[len(validation):]
+    future_ci = ci.iloc[len(validation):]
+
+    fig, ax = plt.subplots(figsize=(fig_sz[0], fig_sz[1] + 1))
+    ax.plot(train, label="Training Data", color=colors["train"], alpha=0.7)
+    ax.plot(validation, label="Actual (Validation)", color=colors["actual"])
+    ax.plot(val_forecast, label="Backtest Forecast", color=colors["forecast"], linestyle="--", alpha=0.6)
+
+    if len(future_forecast) > 0:
+        ax.plot(future_forecast, label=f"Forecast ({horizon} periods)", color=colors["forecast"], linewidth=2)
+        ax.fill_between(
+            future_forecast.index,
+            future_ci.iloc[:, 0],
+            future_ci.iloc[:, 1],
+            color=colors["ci_fill"],
+            alpha=colors["ci_alpha"],
+            label="95% CI",
+        )
+
+    if src.get("ensemble_forecast"):
+        ax.set_title(f"Ensemble (SARIMA+WMA) Extended Forecast — {label}")
+    else:
+        ax.set_title(f"SARIMA Extended Forecast — {label}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel(target)
+    ax.legend(loc="upper left")
+    ax.grid(True)
+    _save_fig(fig, "06_extended_forecast.png", src)
+
+
 def plot_all(time_series, cleaned, smoothed, model_results, forecast_df, src):
     """
-    Generate all 5 standard SignalStack plots for one source run.
+    Generate all 6 standard SignalStack plots for one source run.
 
     Parameters:
         time_series (pd.Series):    Raw time series from data_loader.
@@ -184,12 +246,21 @@ def plot_all(time_series, cleaned, smoothed, model_results, forecast_df, src):
     plot_preprocessing(time_series, cleaned, smoothed, src)
 
     # Reconstruct forecast series for the forecast vs actual plot
-    from src.evaluator import forecast as run_forecast
-    forecast_values, ci = run_forecast(
-        model_results["model"],
-        steps=len(model_results["validation"]),
-        log_transformed=model_results["log_transformed"],
-    )
+    from src.evaluator import forecast as run_forecast, ensemble_forecast as run_ensemble_forecast
+    if src.get("ensemble_forecast"):
+        forecast_values, ci = run_ensemble_forecast(
+            model_results["model"],
+            steps=len(model_results["validation"]),
+            log_transformed=model_results["log_transformed"],
+            smoothed_series=model_results.get("smoothed"),
+            weights=tuple(src.get("ensemble_weights", (0.6, 0.4))),
+        )
+    else:
+        forecast_values, ci = run_forecast(
+            model_results["model"],
+            steps=len(model_results["validation"]),
+            log_transformed=model_results["log_transformed"],
+        )
     plot_forecast_vs_actual(
         model_results["train"],
         model_results["validation"],
@@ -198,5 +269,11 @@ def plot_all(time_series, cleaned, smoothed, model_results, forecast_df, src):
         src,
     )
     plot_residuals(forecast_df, src)
+    plot_forecast_extended(
+        model_results["train"],
+        model_results["validation"],
+        model_results,
+        src,
+    )
 
     print(f"[visualizer] All plots saved to: {src['visuals_dir']}/\n")

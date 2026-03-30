@@ -38,31 +38,33 @@ from src.preprocessor import preprocess
 from src.model        import train_model, split_data, apply_log_transform, train_final_model, save_model
 from src.evaluator    import evaluate
 from src.visualizer   import plot_all
+from src.accuracy_log import log_run
 
 
 # ── Manual override params — fill these in after your first grid search ──────
 # These are used when --skip-search is passed.
 # Update per source after your first successful run.
 MANUAL_PARAMS = {
+    # ── Updated from grid search run 2026-W13 (convergence-aware + MAPE guardrail) ──
     "sales": {
-        "order":    (1, 1, 1),
-        "seasonal": (0, 0, 0, 5),
+        "order":    (0, 1, 0),
+        "seasonal": (2, 0, 2, 5),   # AIC: -736.75 | MAPE: 12.75%
     },
     "ops_pulse": {
-        "order":    (1, 1, 1),
-        "seasonal": (0, 0, 0, 4),
+        "order":    (0, 1, 1),
+        "seasonal": (0, 0, 0, 4),   # AIC: -291.11  | MAPE: 2.11%
     },
     "cash_flow_compass": {
-        "order":    (1, 1, 1),
-        "seasonal": (0, 0, 0, 4),
+        "order":    (2, 1, 0),
+        "seasonal": (2, 0, 0, 4),   # AIC: -529.49  | MAPE: 0.62%
     },
     "pipeline_pulse": {
-        "order":    (1, 1, 1),
-        "seasonal": (0, 0, 0, 4),
+        "order":    (0, 1, 1),
+        "seasonal": (0, 0, 0, 4),   # AIC: -120.95  | MAPE: 10.50% (ensemble)
     },
     "team_tempo": {
-        "order":    (1, 1, 1),
-        "seasonal": (0, 0, 0, 4),
+        "order":    (2, 1, 2),
+        "seasonal": (0, 0, 0, 4),   # AIC: -357.85  | MAPE: 2.90%
     },
 }
 
@@ -114,6 +116,7 @@ def run_source(source_name, skip_search=False):
             "model":          fitted,
             "train":          train,
             "validation":     validation,
+            "smoothed":       smoothed,
             "order":          order,
             "seasonal_order": seasonal,
             "aic":            fitted.aic,
@@ -121,10 +124,11 @@ def run_source(source_name, skip_search=False):
             "source":         source_name,
         }
     else:
-        model_results = train_model(smoothed, src)
+        model_results = train_model(smoothed, src, smoothed_series_full=smoothed)
 
     # ── Step 4: Evaluate ─────────────────────────────────────────────────────
     metrics, forecast_df = evaluate(model_results, src)
+    log_run(source_name, model_results, metrics, src)
 
     # ── Step 5: Visualize ────────────────────────────────────────────────────
     plot_all(time_series, cleaned, smoothed, model_results, forecast_df, src)

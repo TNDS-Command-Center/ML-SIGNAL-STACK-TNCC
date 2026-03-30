@@ -11,11 +11,35 @@ outputs, models, and visuals.
 
 | Source | Workbook | Target Column | Frequency |
 |---|---|---|---|
-| `sales` | SignalStack_SalesTemplate.xlsx | Total Sales | Business Day |
+| `sales` | tnds-sales-data-template.xlsx | Total Sales | Business Day |
 | `ops_pulse` | SignalStack_OpsPulse.xlsx | Jobs Done | Weekly |
 | `cash_flow_compass` | SignalStack_CashFlowCompass.xlsx | Ending Balance | Weekly |
 | `pipeline_pulse` | SignalStack_PipelinePulse.xlsx | Pipeline Value | Weekly |
 | `team_tempo` | SignalStack_TeamTempo.xlsx | Billable Hrs | Weekly |
+
+Current forecast/validation defaults:
+- `sales`: forecast horizon `90` business days, validation size `60`
+- Weekly sources: forecast horizon `12` weeks, validation size `16`
+
+---
+
+## Current Data Baseline (Updated March 29, 2026)
+
+The workbooks were expanded for ML testing with an additional full year of synthetic historical rows.
+
+| Source | Workbook Tab | Rows Exported | Current End Date |
+|---|---|---:|---|
+| `sales` | `RAW_INPUT` | 441 | 2026-07-21 |
+| `ops_pulse` | `Weekly Log` (aggregated to weekly) | 85 | 2026-W27 |
+| `cash_flow_compass` | `Weekly Position` tracker | 85 | 2026-05-18 |
+| `pipeline_pulse` | `Pipeline Log` (aggregated weekly) | 89 (weekly agg) | 2026-W23 |
+| `team_tempo` | `Hours Log` (aggregated to weekly) | 85 | 2026-W27 |
+
+Rebuild raw CSVs any time workbook data changes:
+
+```bash
+python export_to_csv.py
+```
 
 ---
 
@@ -56,9 +80,10 @@ tnds-signal-engine/
   src/
     data_loader.py        # Source-aware CSV loading
     preprocessor.py       # Outlier detection + EWM smoothing
-    model.py              # SARIMA grid search + training
-    evaluator.py          # Forecast + metrics (MAE/RMSE/MAPE)
-    visualizer.py         # 5 standard plots per source
+    accuracy_log.py       # Persistent run-by-run accuracy tracking CSV
+    model.py              # Convergence-aware SARIMA grid search + training
+    evaluator.py          # Forecast + metrics (MAE/RMSE/MAPE + CV)
+    visualizer.py         # 6 standard plots per source
   data/
     raw/
       sales/              # Drop: sales_pipeline_ready.csv
@@ -69,7 +94,7 @@ tnds-signal-engine/
     processed/            # Auto-generated: cleaned + smoothed CSVs
     output/               # Auto-generated: forecast results + metrics
   models/                 # Auto-generated: sarima_model.pkl per source
-  visuals/                # Auto-generated: 5 PNGs per source
+  visuals/                # Auto-generated: 6 PNGs per source
 ```
 
 ---
@@ -77,35 +102,34 @@ tnds-signal-engine/
 ## Export Instructions (per source)
 
 ### Sales
-1. Open `SignalStack_SalesTemplate.xlsx`
-2. Go to **PIPELINE_READY** tab
-3. File → Save As → CSV
-4. Save as `data/raw/sales/sales_pipeline_ready.csv`
+1. Open `tnds-sales-data-template.xlsx`
+2. Go to **RAW_INPUT** tab
+3. Add transaction rows with `Date`, `Qty`, and `Sales Price` (or `Total Sales`)
+4. Run `python export_to_csv.py --source sales` (script writes `data/raw/sales/sales_pipeline_ready.csv`)
 
 ### Ops Pulse
 1. Open `SignalStack_OpsPulse.xlsx`
-2. Go to **Dashboard** tab
-3. Copy the **8-week trend table** rows (Week, Jobs Done, On-Time %, etc.)
-4. Paste into a new sheet, save as `data/raw/ops_pulse/ops_pulse_weekly.csv`
-   — OR — run `python export_to_csv.py --source ops_pulse`
+2. Go to **Weekly Log** tab
+3. Add per-job rows (`Date`, `Jobs Completed`, `Scheduled Time`, `Actual Time`, `On Time?`, `Callback?`)
+4. Run `python export_to_csv.py --source ops_pulse` (script aggregates to weekly CSV)
 
 ### Cash Flow Compass
 1. Open `SignalStack_CashFlowCompass.xlsx`
 2. Go to **Weekly Position** tab
-3. Copy the 8-week tracker rows
+3. Copy the full weekly tracker rows
 4. Save as `data/raw/cash_flow_compass/cash_flow_weekly.csv`
 
 ### Pipeline Pulse
 1. Open `SignalStack_PipelinePulse.xlsx`
-2. Go to **Dashboard** tab
-3. Copy the funnel metrics trend rows (requires adding a weekly tracking table)
-4. Save as `data/raw/pipeline_pulse/pipeline_pulse_weekly.csv`
+2. Go to **Pipeline Log** tab
+3. Ensure `Date Entered` and `Est. Value` are populated for active rows
+4. Save as `data/raw/pipeline_pulse/pipeline_pulse_weekly.csv` (export script aggregates weekly)
 
 ### Team Tempo
 1. Open `SignalStack_TeamTempo.xlsx`
-2. Go to **Dashboard** tab
-3. Copy the 8-week trend table rows
-4. Save as `data/raw/team_tempo/team_tempo_weekly.csv`
+2. Go to **Hours Log** tab and add per-employee weekly rows
+3. Keep **Roster** tab up to date for active employees/status
+4. Run `python export_to_csv.py --source team_tempo` (script aggregates to weekly CSV)
 
 **Shortcut:** Place all .xlsx files in the project root and run:
 ```bash
@@ -130,8 +154,11 @@ No other files need to change.
 ```
 data/output/<source>/
   forecast_results.csv        # Actual vs Forecast vs CI vs Residuals
-  metrics.txt                 # MAE, RMSE, MAPE, model params
-  best_sarima_parameters.txt  # Best order from grid search
+  metrics.txt                 # MAE, RMSE, MAPE, CV_Mean_MAPE, CV_Std_MAPE
+  best_sarima_parameters.txt  # Best order + AIC + adjusted AIC + convergence
+
+data/output/
+  accuracy_log.csv            # One row per source per run (persistent history)
 
 models/<source>/
   sarima_model.pkl            # Trained model (reload with --skip-search)
@@ -142,6 +169,7 @@ visuals/<source>/
   03_preprocessing.png
   04_forecast_vs_actual.png
   05_residuals.png
+  06_extended_forecast.png
 ```
 
 ---
@@ -151,6 +179,10 @@ visuals/<source>/
 Update `MANUAL_PARAMS` in `run_pipeline.py` with the best parameters
 from `data/output/<source>/best_sarima_parameters.txt`, then use
 `--skip-search` for all future runs to skip the slow grid search.
+
+Grid search now filters non-converged fits, uses an adjusted-AIC selection
+score to discourage over-parameterization on short series, and applies a
+MAPE guardrail fallback when a best-AIC model performs poorly on validation.
 
 ---
 

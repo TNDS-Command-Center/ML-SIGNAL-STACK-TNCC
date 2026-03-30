@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python generate_report.py)",
+      "Bash(python package_output.py)"
+    ]
+  }
+}

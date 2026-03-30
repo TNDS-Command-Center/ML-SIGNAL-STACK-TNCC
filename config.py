@@ -35,12 +35,12 @@ OUTLIER_REPLACEMENT = "median"
 SMOOTHING_SPAN      = 14
 VALIDATION_SIZE     = 60
 LOG_TRANSFORM       = True
-SARIMA_P_RANGE      = range(0, 2)
+SARIMA_P_RANGE      = range(0, 3)
 SARIMA_D_RANGE      = range(0, 2)
-SARIMA_Q_RANGE      = range(0, 2)
-SARIMA_SEASONAL_P   = range(0, 2)
+SARIMA_Q_RANGE      = range(0, 3)
+SARIMA_SEASONAL_P   = range(0, 3)
 SARIMA_SEASONAL_D   = range(0, 2)
-SARIMA_SEASONAL_Q   = range(0, 2)
+SARIMA_SEASONAL_Q   = range(0, 3)
 SEASONAL_PERIOD     = 12
 MAX_ITER_SEARCH     = 100
 MAX_ITER_FINAL      = 500
@@ -88,7 +88,10 @@ SOURCE_REGISTRY = {
         "frequency":       "B",
         "seasonal_period": 5,          # weekly pattern in business-day data
         "validation_size": 60,
+        "forecast_horizon": 90,
+        "sarima_d_range":  range(1, 3),
         "smoothing_span":  14,
+        "max_train_periods": 180,     # ~9 months of business days (regime-aware training)
         "description":     "Daily Sales Revenue",
         "sheet_notes":     "SignalStack_SalesTemplate.xlsx → PIPELINE_READY tab",
     },
@@ -105,7 +108,8 @@ SOURCE_REGISTRY = {
         "price_column":    None,
         "frequency":       "W",
         "seasonal_period": 4,          # monthly pattern in weekly data
-        "validation_size": 8,
+        "validation_size": 16,
+        "forecast_horizon": 12,
         "smoothing_span":  4,
         "description":     "Weekly Jobs Completed",
         "sheet_notes":     "SignalStack_OpsPulse.xlsx → Dashboard tab (copy trend table rows)",
@@ -130,7 +134,8 @@ SOURCE_REGISTRY = {
         "price_column":    None,
         "frequency":       "W",
         "seasonal_period": 4,
-        "validation_size": 8,
+        "validation_size": 16,
+        "forecast_horizon": 12,
         "smoothing_span":  4,
         "description":     "Weekly Ending Cash Balance",
         "sheet_notes":     "SignalStack_CashFlowCompass.xlsx → Weekly Position tab (8-week tracker)",
@@ -154,8 +159,15 @@ SOURCE_REGISTRY = {
         "price_column":    None,
         "frequency":       "W",
         "seasonal_period": 4,
-        "validation_size": 8,
-        "smoothing_span":  4,
+        "validation_size": 16,
+        "forecast_horizon": 12,
+        "smoothing_span":  6,
+        "sarima_p_range":  range(0, 2),
+        "sarima_q_range":  range(0, 2),
+        "sarima_seasonal_p": range(0, 2),
+        "sarima_seasonal_q": range(0, 2),
+        "ensemble_forecast": True,       # blend SARIMA + WMA for volatile deal-flow signal
+        "ensemble_weights":  (0.6, 0.4), # (sarima_weight, wma_weight)
         "description":     "Weekly Estimated Pipeline Value",
         "sheet_notes":     "SignalStack_PipelinePulse.xlsx → Pipeline Log tab (aggregated by week)",
         "extra_signals": {
@@ -177,7 +189,8 @@ SOURCE_REGISTRY = {
         "price_column":    None,
         "frequency":       "W",
         "seasonal_period": 4,
-        "validation_size": 8,
+        "validation_size": 16,
+        "forecast_horizon": 12,
         "smoothing_span":  4,
         "description":     "Weekly Billable Hours",
         "sheet_notes":     "SignalStack_TeamTempo.xlsx → Dashboard tab (8-week trend)",
@@ -244,6 +257,9 @@ def get_source(source_name):
         "tolerance_search":    TOLERANCE_SEARCH,
         "tolerance_final":     TOLERANCE_FINAL,
         "forecast_horizon":    FORECAST_HORIZON,
+        "max_train_periods":   None,
+        "ensemble_forecast":   False,
+        "ensemble_weights":    (1.0, 0.0),
         "figure_size":         FIGURE_SIZE,
         "colors":              COLORS,
         "extra_signals":       {},

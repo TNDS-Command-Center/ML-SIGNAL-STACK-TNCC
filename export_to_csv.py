@@ -33,23 +33,22 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 EXPORT_MAP = {
 
-    # Sales — tnds-sales-data-template.xlsx, PIPELINE_READY tab
+    # Sales — tnds-sales-data-template.xlsx, RAW_INPUT tab
     # Layout: row 0=title, row 1=subtitle, row 2=col headers, rows 3+=data
     "sales": {
         "workbook":  os.path.join(BASE_DIR, "tnds-sales-data-template.xlsx"),
-        "sheet":     "PIPELINE_READY",
+        "sheet":     "RAW_INPUT",
         "skip_rows": 2,
-        "mode":      "standard",
+        "mode":      "sales_from_raw",
         "keep_cols": ["Date", "Qty", "Sales Price"],
     },
 
-    # Ops Pulse — Dashboard tab, row 8 = headers
-    # Headers: Week, Jobs Done, On-Time %, Callback %, Avg Hours, Utilization %, Open WOs, Notes
+    # Ops Pulse — Weekly Log tab, row 2=headers, row 3 includes auto-calc label row, row 4+=data
     "ops_pulse": {
         "workbook":  os.path.join(BASE_DIR, "SignalStack_OpsPulse.xlsx"),
-        "sheet":     "Dashboard",
-        "skip_rows": 8,
-        "mode":      "standard",
+        "sheet":     "Weekly Log",
+        "skip_rows": 2,
+        "mode":      "ops_from_log",
         "keep_cols": ["Week", "Jobs Done", "On-Time %", "Callback %",
                       "Avg Hours", "Utilization %", "Open WOs"],
     },
@@ -77,17 +76,50 @@ EXPORT_MAP = {
         "value_col": "Est. Value",
     },
 
-    # Team Tempo — Dashboard tab, row 8 = headers
-    # Headers: Week, Headcount, Billable Hrs, OT Hrs, Utilization %, Turnover, Training Hrs, Notes
+    # Team Tempo — aggregate from Hours Log (+ Roster fallback for headcount)
     "team_tempo": {
         "workbook":  os.path.join(BASE_DIR, "SignalStack_TeamTempo.xlsx"),
-        "sheet":     "Dashboard",
-        "skip_rows": 8,
-        "mode":      "standard",
+        "sheet":     "Hours Log",
+        "roster_sheet": "Roster",
+        "skip_rows": 2,
+        "mode":      "tempo_from_log",
         "keep_cols": ["Week", "Headcount", "Billable Hrs", "OT Hrs",
                       "Utilization %", "Turnover", "Training Hrs"],
     },
 }
+
+
+def _norm_col(col):
+    """Normalize header names for resilient matching (handles newlines/spaces/case)."""
+    return " ".join(str(col).replace("\n", " ").replace("\r", " ").strip().lower().split())
+
+
+def _find_col(df, aliases, required=True):
+    """
+    Find a column by one of several aliases using normalized matching.
+    Returns the actual dataframe column name or None.
+    """
+    alias_norm = {_norm_col(a) for a in aliases}
+    for col in df.columns:
+        if _norm_col(col) in alias_norm:
+            return col
+
+    if required:
+        print(f"[export] WARNING: missing required column aliases: {aliases}")
+        print(f"[export]   Available: {list(df.columns)}")
+    return None
+
+
+def _parse_dates_flexible(series):
+    """
+    Parse dates with a fast fixed-format pass first, then fallback parse for stragglers.
+    Avoids noisy infer-format warnings on mixed cells.
+    """
+    parsed = pd.to_datetime(series, format="%m/%d/%Y", errors="coerce")
+    missing = parsed.isna()
+    if missing.any():
+        parsed.loc[missing] = pd.to_datetime(series.loc[missing], errors="coerce")
+    return parsed
 
 
 def export_standard(source_name, src, export_cfg):
@@ -158,6 +190,222 @@ def export_cash_flow(source_name, src, export_cfg):
     return df
 
 
+def export_sales_from_raw(source_name, src, export_cfg):
+    """
+    Sales export from RAW_INPUT tab.
+    Keeps Date, Qty, Sales Price (transaction-level rows, no aggregation).
+    """
+    wb_path = export_cfg["workbook"]
+    sheet = export_cfg["sheet"]
+    skiprows = export_cfg["skip_rows"]
+
+    df = pd.read_excel(wb_path, sheet_name=sheet, skiprows=skiprows,
+                       header=0, engine="openpyxl")
+    df = df.dropna(how="all").dropna(axis=1, how="all")
+    if df.empty:
+        print(f"[export] WARNING: RAW_INPUT tab is empty.")
+        return pd.DataFrame()
+
+    date_col = _find_col(df, ["Date"])
+    qty_col = _find_col(df, ["Qty", "Quantity"])
+    price_col = _find_col(df, ["Sales Price", "Rate", "Price"])
+    total_col = _find_col(df, ["Total Sales", "Amount"], required=False)
+
+    if not all([date_col, qty_col, price_col]):
+        return pd.DataFrame()
+
+    df["__date"] = _parse_dates_flexible(df[date_col])
+    df = df.dropna(subset=["__date"])
+    if df.empty:
+        print(f"[export] WARNING: no valid sales rows after date parsing.")
+        return pd.DataFrame()
+
+    qty = pd.to_numeric(df[qty_col], errors="coerce")
+    price = pd.to_numeric(df[price_col], errors="coerce")
+
+    # If Qty/Price are missing but Total Sales exists, backfill as Qty=1, Price=Total.
+    if total_col and total_col in df.columns:
+        total = pd.to_numeric(df[total_col], errors="coerce")
+        mask_total_only = qty.isna() & price.isna() & total.notna()
+        qty.loc[mask_total_only] = 1
+        price.loc[mask_total_only] = total.loc[mask_total_only]
+
+    result = pd.DataFrame({
+        "Date": df["__date"].dt.strftime("%m/%d/%Y"),
+        "Qty": qty.fillna(0),
+        "Sales Price": price.fillna(0),
+    })
+
+    result = result.dropna(subset=["Date"])
+    return result
+
+
+def export_ops_from_log(source_name, src, export_cfg):
+    """
+    Ops Pulse export from Weekly Log (per-job rows) aggregated to ISO week.
+    Output columns:
+      Week, Jobs Done, On-Time %, Callback %, Avg Hours, Utilization %, Open WOs
+    """
+    wb_path = export_cfg["workbook"]
+    sheet = export_cfg["sheet"]
+    skiprows = export_cfg["skip_rows"]
+
+    df = pd.read_excel(wb_path, sheet_name=sheet, skiprows=skiprows,
+                       header=0, engine="openpyxl")
+    df = df.dropna(how="all").dropna(axis=1, how="all")
+    if df.empty:
+        print(f"[export] WARNING: Weekly Log tab is empty.")
+        return pd.DataFrame()
+
+    date_col = _find_col(df, ["Date"])
+    jobs_col = _find_col(df, ["Jobs Completed", "Jobs"])
+    sched_col = _find_col(df, ["Scheduled Time (h)", "Scheduled Time"])
+    actual_col = _find_col(df, ["Actual Time (h)", "Actual Time"])
+    ontime_col = _find_col(df, ["On Time? (Y/N)", "On Time"])
+    callback_col = _find_col(df, ["Callback? (Y/N)", "Callback"])
+    open_wos_col = _find_col(df, ["Open WOs", "Open WOs"], required=False)
+
+    if not all([date_col, jobs_col, sched_col, actual_col, ontime_col, callback_col]):
+        return pd.DataFrame()
+
+    df["__date"] = _parse_dates_flexible(df[date_col])
+    df = df.dropna(subset=["__date"])
+    if df.empty:
+        print(f"[export] WARNING: no valid ops rows after date parsing.")
+        return pd.DataFrame()
+
+    df["__week"] = df["__date"].dt.strftime("%G-W%V")
+    df["__jobs"] = pd.to_numeric(df[jobs_col], errors="coerce").fillna(0)
+    df["__sched"] = pd.to_numeric(df[sched_col], errors="coerce").fillna(0)
+    df["__actual"] = pd.to_numeric(df[actual_col], errors="coerce").fillna(0)
+    df["__on_time"] = df[ontime_col].astype(str).str.strip().str.upper().eq("Y").astype(int)
+    df["__callback"] = df[callback_col].astype(str).str.strip().str.upper().eq("Y").astype(int)
+
+    if open_wos_col and open_wos_col in df.columns:
+        df["__open_wos"] = pd.to_numeric(df[open_wos_col], errors="coerce")
+    else:
+        print(f"[export] INFO: Open WOs column missing in Weekly Log; defaulting to 0.")
+        df["__open_wos"] = 0
+
+    grouped = df.groupby("__week", as_index=False).agg(
+        Jobs_Done=("__jobs", "sum"),
+        On_Time_Rate=("__on_time", "mean"),
+        Callback_Rate=("__callback", "mean"),
+        Avg_Hours=("__actual", "mean"),
+        Actual_Sum=("__actual", "sum"),
+        Scheduled_Sum=("__sched", "sum"),
+        Open_WOs=("__open_wos", "last"),
+    )
+
+    grouped["Utilization_Pct"] = grouped.apply(
+        lambda r: (r["Actual_Sum"] / r["Scheduled_Sum"]) if r["Scheduled_Sum"] > 0 else 0,
+        axis=1,
+    )
+    grouped["Open_WOs"] = pd.to_numeric(grouped["Open_WOs"], errors="coerce").fillna(0)
+
+    # Stable weekly ordering
+    grouped["__week_date"] = pd.to_datetime(
+        grouped["__week"] + "-1", format="%G-W%V-%u", errors="coerce"
+    )
+    grouped = grouped.sort_values("__week_date")
+
+    result = grouped[[
+        "__week", "Jobs_Done", "On_Time_Rate", "Callback_Rate",
+        "Avg_Hours", "Utilization_Pct", "Open_WOs"
+    ]].copy()
+    result.columns = ["Week", "Jobs Done", "On-Time %", "Callback %",
+                      "Avg Hours", "Utilization %", "Open WOs"]
+    return result
+
+
+def export_tempo_from_log(source_name, src, export_cfg):
+    """
+    Team Tempo export from Hours Log, with Roster fallback for headcount.
+    Output columns:
+      Week, Headcount, Billable Hrs, OT Hrs, Utilization %, Turnover, Training Hrs
+    """
+    wb_path = export_cfg["workbook"]
+    sheet = export_cfg["sheet"]
+    roster_sheet = export_cfg.get("roster_sheet", "Roster")
+    skiprows = export_cfg["skip_rows"]
+
+    hours = pd.read_excel(wb_path, sheet_name=sheet, skiprows=skiprows,
+                          header=0, engine="openpyxl")
+    hours = hours.dropna(how="all").dropna(axis=1, how="all")
+    if hours.empty:
+        print(f"[export] WARNING: Hours Log tab is empty.")
+        return pd.DataFrame()
+
+    roster = pd.read_excel(wb_path, sheet_name=roster_sheet, skiprows=skiprows,
+                           header=0, engine="openpyxl")
+    roster = roster.dropna(how="all").dropna(axis=1, how="all")
+
+    week_col = _find_col(hours, ["Week Of", "Week"])
+    employee_col = _find_col(hours, ["Employee"])
+    regular_col = _find_col(hours, ["Regular Hrs", "Regular Hours"])
+    ot_col = _find_col(hours, ["OT Hrs", "Overtime Hrs"])
+    training_col = _find_col(hours, ["Training Hrs", "Training Hours"])
+    if not all([week_col, employee_col, regular_col, ot_col, training_col]):
+        return pd.DataFrame()
+
+    hours["__week_date"] = _parse_dates_flexible(hours[week_col])
+    hours = hours.dropna(subset=["__week_date"])
+    if hours.empty:
+        print(f"[export] WARNING: no valid team tempo rows after date parsing.")
+        return pd.DataFrame()
+
+    hours["__week"] = hours["__week_date"].dt.strftime("%G-W%V")
+    hours["__employee"] = hours[employee_col].astype(str).str.strip()
+    hours["__regular"] = pd.to_numeric(hours[regular_col], errors="coerce").fillna(0)
+    hours["__ot"] = pd.to_numeric(hours[ot_col], errors="coerce").fillna(0)
+    hours["__training"] = pd.to_numeric(hours[training_col], errors="coerce").fillna(0)
+    hours["__billable"] = hours["__regular"] + hours["__ot"]
+
+    grouped = hours.groupby("__week", as_index=False).agg(
+        Headcount=("__employee", "nunique"),
+        Billable_Hrs=("__billable", "sum"),
+        OT_Hrs=("__ot", "sum"),
+        Training_Hrs=("__training", "sum"),
+    )
+
+    # Roster fallback for sparse hours logs
+    active_count = 0
+    if not roster.empty:
+        r_status_col = _find_col(roster, ["Status"], required=False)
+        r_employee_col = _find_col(roster, ["Employee"], required=False)
+        if r_employee_col:
+            if r_status_col:
+                active_mask = roster[r_status_col].astype(str).str.strip().str.lower().eq("active")
+                active_count = roster.loc[active_mask, r_employee_col].astype(str).str.strip().nunique()
+            else:
+                active_count = roster[r_employee_col].astype(str).str.strip().nunique()
+
+    if active_count > 0:
+        grouped["Headcount"] = grouped["Headcount"].replace(0, active_count)
+
+    grouped["Utilization_Pct"] = grouped.apply(
+        lambda r: (r["Billable_Hrs"] / (r["Headcount"] * 40)) if r["Headcount"] > 0 else 0,
+        axis=1,
+    )
+
+    # Default turnover (status-change tracking requires roster snapshots over time).
+    grouped["Turnover"] = 0
+
+    # Stable weekly ordering
+    grouped["__week_date"] = pd.to_datetime(
+        grouped["__week"] + "-1", format="%G-W%V-%u", errors="coerce"
+    )
+    grouped = grouped.sort_values("__week_date")
+
+    result = grouped[[
+        "__week", "Headcount", "Billable_Hrs", "OT_Hrs",
+        "Utilization_Pct", "Turnover", "Training_Hrs"
+    ]].copy()
+    result.columns = ["Week", "Headcount", "Billable Hrs", "OT Hrs",
+                      "Utilization %", "Turnover", "Training Hrs"]
+    return result
+
+
 def export_aggregate_weekly(source_name, src, export_cfg):
     """Read Pipeline Log, group by ISO week, sum value + count deals."""
     wb_path  = export_cfg["workbook"]
@@ -210,7 +458,13 @@ def export_source(source_name):
         return False
 
     try:
-        if mode == "cash_flow":
+        if mode == "sales_from_raw":
+            df = export_sales_from_raw(source_name, src, export_cfg)
+        elif mode == "ops_from_log":
+            df = export_ops_from_log(source_name, src, export_cfg)
+        elif mode == "tempo_from_log":
+            df = export_tempo_from_log(source_name, src, export_cfg)
+        elif mode == "cash_flow":
             df = export_cash_flow(source_name, src, export_cfg)
         elif mode == "aggregate_weekly":
             df = export_aggregate_weekly(source_name, src, export_cfg)

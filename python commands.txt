@@ -1,0 +1,13 @@
+python export_to_csv.py
+
+python run_pipeline.py --source all
+
+or
+
+python run_pipeline.py --skip-search
+
+python generate_report.py
+
+
+python package_output.py
+
